@@ -1,0 +1,481 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8"> 
+<link rel="stylesheet" type="text/css" href="styles.css">
+<title>Libproj</title>
+</head>
+<body>
+<script type="text/javascript" src="jquery-3.1.1.min.js"></script>
+<script type="text/javascript" src="jquery-dateFormat.min.js"></script>
+<script type="text/javascript">
+var dateFormat = "E dd.MM.yyyy";
+var authToken = localStorage.getItem("token");
+var myUsername = localStorage.getItem("username");
+var rowsTotal = 0;
+var inputFiles = 0;
+
+function getXHRError(xhr) {
+	if (xhr.responseJSON) {
+		if (xhr.responseJSON.error)
+			return xhr.responseJSON.error;
+		else if (xhr.responseJSON.message)
+			return xhr.responseJSON.message;
+		else
+			return xhr.responseJSON;
+	} else if (xhr.responseText)
+		return xhr.responseText;
+	return "";
+}
+
+function capitalizeFirstLetter(string) {
+	string = string.toLowerCase();
+    return string.charAt(0).toUpperCase() + string.slice(1);
+}
+
+$(document).ready(function() {
+	var user, pass;
+	
+	// Login form submit activated
+	$("#loginform").submit(function(event) {
+		user = capitalizeFirstLetter($("#luser").val());
+		pass = $("#lpass").val();
+		$.post("/api/auth/login", {username: user, password: pass}, function(data) {
+		})
+		.done(function(data) {
+			$("#message").html("Login successful.");
+			localStorage.setItem("token", data.token);
+			localStorage.setItem("username", user);
+			updateView();
+		})
+		.fail(function(xhr, status, error) {
+			$("#logininfo").html(getXHRError(xhr))
+		})
+		event.preventDefault();
+	});
+	// Register form submit activated
+	$("#registerform").submit(function(event) {
+		user = capitalizeFirstLetter($("#ruser").val());
+		pass = $("#rpass").val();
+		$.post("/api/auth/register", {username: user, password: pass}, function(data) {
+		})
+		.done(function(data) {
+			$("#message").html("Registration successful!")
+			localStorage.setItem("token", data.token);
+			localStorage.setItem("username", user);
+			updateView();
+		})
+		.fail(function(xhr, status, error) {
+			$("#registerinfo").html(getXHRError(xhr))
+		})
+		event.preventDefault();
+	});
+});
+
+function isLoggedIn() {
+	if (authToken && myUsername)
+		return true;
+	return false;
+}
+
+function updateLoginStatus() {
+	authToken = localStorage.getItem("token");
+	myUsername = localStorage.getItem("username");
+	var loginstatus = $("#loginstatus");
+	if (isLoggedIn()) {
+		loginstatus.html("Logged in as <b>" + localStorage.getItem("username") + "</b>.<br />");
+		loginstatus.append("<input type=\"button\" id=\"logout\" onclick=\"logout()\" value=\"Logout\">");
+	} else {
+		loginstatus.html("You are not logged in.");
+	}
+}
+
+function logout() {
+	localStorage.setItem("username", "");
+	localStorage.setItem("token", "");
+	$("#message").html("You have logged out.");
+	updateView();
+}
+
+function updateView() {
+	updateLoginStatus();
+	if (isLoggedIn()) {
+		createBookList();
+		$("#login").hide();
+		$("#register").hide();
+		$("#books").show();
+		$("#addbook").show();
+		$("#lpass").val("");
+		$("#rpass").val("");
+		$("#logininfo").html("Type your username and password");
+		$("#registerinfo").html("Type your username and password");
+	} else {
+		$("#bookstable").remove();
+		$("#login").show();
+		$("#register").show();
+		$("#books").hide();
+		$("#addbook").hide();
+	}
+}
+
+$(document).ready(function() {
+	updateView();
+});
+</script>
+<script type="text/javascript">
+// Book table related scripts
+// Fetch a username with Id
+function fetchUsernameAndUpdateTable(userId, bookId, tableRow = -1, tableColumn = -1) {
+	$.ajax({
+		method: "GET",
+		url: "/api/auth/profile/" + userId,
+		headers: {
+			"Authorization": "Bearer " + authToken
+		}
+	})
+	.done(function(msg) {
+		updateTableCell(msg.username, tableRow, tableColumn);
+		if (msg.username === myUsername) {
+			addCancelReservationButton(bookId, tableRow);
+		}
+	})
+	.fail(function(xhr, status, error) {
+		updateTableCell("Failed to fetch!", tableRow, tableColumn);
+	});
+}
+
+function cancelReservation(bookId, tableRow = -1, tableColumn = -1) {
+	$.ajax({
+		method: "DELETE",
+		url: "/api/reservations/" + bookId,
+		data: { id: bookId },
+		dataType: 'json',
+		headers: {
+			"Authorization": "Bearer " + authToken
+		}
+	})
+	.done(function() {
+		$("#message").html("Book reservation cancelled.");
+		updateTableCell("-", tableRow, tableColumn);
+		updateTableCell("-", tableRow, tableColumn + 1);
+		addReserveButton(bookId, tableRow);
+	})
+	.fail(function(xhr, status, error) {
+		$("#message").html(getXHRError(xhr));
+	});
+}
+
+function reserve(bookId, tableRow = -1, tableColumn = -1) {
+	$.ajax({
+		method: "POST",
+		url: "/api/reservations/" + bookId,
+		data: { id: bookId },
+		dataType: 'json',
+		statusCode: {
+			200: function () {
+				$("#message").html("You have already reserved this book.");
+			}
+		},
+		headers: {
+			"Authorization": "Bearer " + authToken
+		}
+	})
+	.done(function(msg) {
+		$("#message").html("Book reserved.");
+		var date = $.format.date($.now(), dateFormat);
+		updateTableCell(myUsername, tableRow, tableColumn);
+		updateTableCell(date, tableRow, tableColumn + 1);
+		addCancelReservationButton(bookId, tableRow);
+	})
+	.fail(function(xhr, status, error) {
+		$("#message").html(getXHRError(xhr));
+	});
+}
+
+function removeBook(bookId, tableRow = -1, tableColumn = -1) {
+	$.ajax({
+		method: "DELETE",
+		url: "/api/books/" + bookId,
+		headers: {
+			"Authorization": "Bearer " + authToken
+		}
+	})
+	.done(function(msg) {
+		$("#message").html("Book and its reservations and eBook files removed.");
+		removeTableRow(tableRow);
+	})
+	.fail(function(xhr, status, error) {
+		$("#message").html(getXHRError(xhr));
+	});
+}
+
+function addTableRow(rowNumber, bookArray, bookArrayIndex = -1) {
+	var table = $("#bookstable");
+	var title;
+	var authors;
+	var owner;
+	if (bookArrayIndex >= 0) {
+		title = bookArray[bookArrayIndex].title;
+		authors = bookArray[bookArrayIndex].authors;
+		owner = bookArray[bookArrayIndex].owner;
+	} else {
+		title = bookArray.title;
+		authors = bookArray.authors;
+		owner = bookArray.owner;
+	}
+	
+	table.append("<tr id=\"row" + rowNumber + "\">" +
+		"<td id=\"cell" + rowNumber + "0\">" + title +
+		"<td id=\"cell" + rowNumber + "1\">" + authors +
+		"<td id=\"cell" + rowNumber + "2\">" + owner +
+		"<td id=\"cell" + rowNumber + "3\">Fetching..." +
+		"<td id=\"cell" + rowNumber + "4\">Fetching..." +
+		"<td id=\"cell" + rowNumber + "5\">Fetching..." +
+		"<td id=\"cell" + rowNumber + "6\" align=\"center\">" + 
+		"<td id=\"cell" + rowNumber + "7\" align=\"center\">"
+		);
+	rowsTotal++;
+}
+
+function removeTableRow(rowNumber) {
+	if (rowNumber >= 0) {
+		$("#row" + rowNumber).remove();
+	}
+}
+
+function updateTableCell(data, tableRow, tableColumn, append = false) {
+	if (tableRow >= 0 && tableColumn >= 0) {
+		var cell = $("#cell" + tableRow + tableColumn);
+		if (append) {
+			if (cell.html())
+				cell.append("<br />");
+			cell.append(data);
+		}
+		else
+			cell.html(data);
+	}
+}
+
+function addReserveButton(bookId, tableRow) {
+	updateTableCell("<input type=\"button\" id=\"resb" + tableRow + "\" onclick=\"reserve('" + bookId + "'," + tableRow + "," + 3 + ")\" value=\"Reserve\">", tableRow, 6);
+}
+
+function addCancelReservationButton(bookId, tableRow) {
+	updateTableCell("<input type=\"button\" id=\"canb" + tableRow + "\" onclick=\"cancelReservation('" + bookId + "'," + tableRow + "," + 3 + ")\" value=\"Cancel\">", tableRow, 6);
+}
+
+function addRemoveBookButton(bookId, tableRow) {
+	updateTableCell("<a href=\"javascript:void(0)\" title=\"Remove book from list\"><img src=\"remove.png\" id=\"remb" + tableRow + "\" onclick=\"removeBook('" + bookId + "'," + tableRow + "," + 3 + ")\"></a>", tableRow, 7);
+}
+
+function addDownloadButton(bookId, eBookId, bookTitle, tableRow, timestamp) {
+	var cell = $("#cell" + tableRow + 5);
+	var oldTimestamp = cell.data("timestamp");
+	if (!oldTimestamp || oldTimestamp <= timestamp) {
+		if (!oldTimestamp || oldTimestamp < timestamp)
+			cell.html("");
+		cell.data("timestamp", timestamp);
+		updateTableCell("<a href=\"api/books/" + bookId + "/ebooks/" + eBookId + "\" id=\"dlnk" + tableRow + "\">" + bookTitle + "</a>", tableRow, 5, true);
+	}
+}
+
+function getReservation(bookId, index) {
+	$.get("/api/reservations/" + bookId, function(reservation) {
+	})
+	.done(function(reservation) {
+		if (reservation.reservations[0]) {
+			var date = $.format.date(reservation.reservations[0].since, dateFormat)
+			fetchUsernameAndUpdateTable(reservation.reservations[0].user_id, bookId, index, 3);
+			updateTableCell(date, index, 4);
+		} else {
+			updateTableCell("-", index, 3);
+			updateTableCell("-", index, 4);
+			if (isLoggedIn())
+				addReserveButton(bookId, index);
+		}
+	});
+}
+
+function getEBooks(bookId, bookTitle, index) {
+	$.get("/api/books/" + bookId + "/ebooks/", function(eBook) {
+	})
+	.done(function(eBook) {
+		var timestamp = $.now();
+		if (!eBook.eBooks[0])
+			updateTableCell("-", index, 5);
+		else {
+			jQuery.each(eBook.eBooks, function(i, val) {
+				addDownloadButton(bookId, val.id, val.filename, index, timestamp);
+			});
+		}
+	});
+}
+
+function createBookList() {
+	if (!isLoggedIn())
+		return;
+	if ($("#bookstable").length)
+		return;
+	
+	var bookListTableBase = '<table id="bookstable"><tr><th>Title</th><th>Authors</th><th>Owner</th><th>Reserved By</th><th>Reserved Since</th><th>eBook Files</th><th>Reservation</th><th>Remove</th></tr></table>';
+	$("#booklistheader").after(bookListTableBase);
+	
+	$.get("/api/books", function(books) {
+	})
+	.done(function(books) {
+		$.each(books.books, function(index, value) {
+			addTableRow(index, books.books, index);
+			getReservation(value.id, index);
+			if (value.owner === myUsername) {
+				addRemoveBookButton(value.id, index);
+			}
+			getEBooks(value.id, value.title, index);
+		});
+	})
+	.fail(function(xhr, status, error) {
+		$("#message").html(getXHRError(xhr))
+	});
+}
+</script>
+<script type="text/javascript">
+// Adding books related scripts
+function addEBook(bookId, bookTitle, fileId, tableRow) {
+	var formData = new FormData();
+	formData.append('file', $('#file' + fileId)[0].files[0]);
+	var uploadStatus = $("#uploadstatus" + fileId);
+	uploadStatus.html("Uploading eBook...");
+	$.ajax({
+		method: "POST",
+		url: "/api/books/" + bookId + "/ebooks",
+		data : formData,
+		processData: false,
+		contentType: false,
+		headers: {
+			"Authorization": "Bearer " + authToken
+		}
+	})
+	.done(function(ebook) {
+		uploadStatus.html("eBook uploaded.");
+		getEBooks(bookId, bookTitle, tableRow);
+	})
+	.fail(function(xhr, status, error) {
+		uploadStatus.html(getXHRError(xhr));
+	});
+}
+
+
+function clearAddBookForm() {
+	document.getElementById("addbookform").reset();
+	inputFiles = 0;
+	$("#extrafiles").html("");
+}
+
+
+function addInputFile() {
+	inputFiles++;
+	var newInputFile = $("<input type=\"file\" id=\"file" + inputFiles  + "\" /><br />");
+	$("#extrafiles").append(newInputFile);
+	var newUploadStatus = $("<p id=\"uploadstatus" + inputFiles + "\"></p>");
+	$("p#uploadstatus" + (inputFiles - 1)).after(newUploadStatus);
+}
+
+
+$(document).ready(function() {
+	// Add book form submit activated
+	$("#addbookform").submit(function(event) {
+		var title = $("#title").val();
+		var authors = $("#authors").val();
+		var owner = myUsername;
+		var myBook = new Object();
+		myBook.title = title;
+		myBook.authors = authors;
+		myBook.owner = owner;
+		$.ajax({
+			method: "POST",
+			url: "/api/books/",
+			data: { title: myBook.title, authors: myBook.authors, owner: myBook.owner },
+			dataType: 'json',
+			headers: {
+				"Authorization": "Bearer " + authToken
+			}
+		})
+		.done(function(book) {
+			$("#message").html("Book <b>" + title + "</b> added.");
+			addTableRow(rowsTotal, myBook);
+			
+			var added = false;
+			var i = 0;
+			while (true) {
+				var file = $("#file" + i);
+				if (file.length) {
+					if (file.val()) {
+						addEBook(book.id, book.title, i, rowsTotal - 1);
+						added = true;
+					}
+				} else
+					break;
+				i++;
+			}
+
+			if (!added)
+				updateTableCell("-", rowsTotal - 1, 5)
+			
+			clearAddBookForm();
+			
+			getReservation(book.id, rowsTotal - 1);
+			addRemoveBookButton(book.id, rowsTotal - 1);
+		})
+		.fail(function(xhr, status, error) {
+			$("#message").html(getXHRError(xhr));
+		});
+		
+		event.preventDefault();
+	});
+});
+</script>
+<p id="message"></p>
+<p id="uploadstatus0"></p>
+<p id="loginstatus"></p>
+<div id="login">
+<h1>Login</h1>
+<p id="logininfo">Type your username and password</p>
+<form id="loginform">
+<p>
+<input type="text" id="luser" size="40" required /><br />
+<input type="password" id="lpass" size="40" required /><br />
+<input type="submit" id="loginbutton" value="Login" />
+</p>
+</form>
+</div>
+<div id="register">
+<h1>Register</h1>
+<p id="registerinfo">Type your username and password</p>
+<form id="registerform">
+<p>
+<input type="text" id="ruser" size="40" required /><br />
+<input type="password" id="rpass" size="40" required /><br />
+<input type="submit" id="registerbutton" value="Register" />
+</p>
+</form>
+</div>
+<div id="addbook">
+<h1>Add Book</h1>
+<form id="addbookform">
+<p>
+Title<input type="text" id="title" size="120" required /><br />
+Authors<input type="text" id="authors" size="120" /><br />
+eBook File<input type="file" id="file0" /><br />
+</p> 	
+<p id="extrafiles"> 	
+</p> 	
+<p>
+<input type="button" id="addfile" value="Add Another eBook File" onclick="addInputFile()" /><br /><br />
+<input type="submit" id="addbookbutton" value="Add Book To List" />
+<input type="button" id="clearaddbookform" onclick="clearAddBookForm()" value="Clear" />
+</p>
+</form>
+</div>
+<div id="books">
+<h1 id="booklistheader">Book List</h1>
+</div>
+</body>
+</html>
